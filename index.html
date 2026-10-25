@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Towers of Hanoi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .disc { transition: all 0.15s ease; }
+  .peg-btn { transition: all 0.2s; }
+  .peg-btn:hover .peg-post { filter: brightness(1.3); }
+  .peg-btn.selected .peg-base { background: #6366f1; }
+  .peg-btn.selected .peg-post { background: #818cf8; }
+</style>
+</head>
+<body class="bg-gray-950 text-white min-h-screen flex flex-col items-center p-4">
+<div class="w-full max-w-2xl">
+  <h1 class="text-3xl font-bold text-center mt-2 mb-1 text-purple-400">Towers of Hanoi</h1>
+  <p class="text-center text-gray-400 text-sm mb-4">Move all discs from peg A to peg C</p>
+
+  <div class="flex flex-wrap gap-3 justify-center items-center mb-4">
+    <div class="flex items-center gap-2">
+      <label class="text-gray-400 text-sm" for="disc-select">Discs:</label>
+      <select id="disc-select" class="bg-gray-800 text-white rounded-lg px-3 py-1.5 text-sm border border-gray-600 focus:border-purple-500 outline-none" aria-label="Number of discs">
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+      </select>
+    </div>
+    <button id="reset-btn" class="bg-gray-700 hover:bg-gray-600 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">Reset</button>
+    <button id="undo-btn" class="bg-gray-700 hover:bg-gray-600 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">Undo</button>
+    <button id="solve-btn" class="bg-purple-700 hover:bg-purple-600 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors">Auto-Solve</button>
+  </div>
+
+  <div class="flex gap-3 justify-center text-sm mb-4 flex-wrap">
+    <div class="bg-gray-800 rounded-lg px-4 py-2 text-center">
+      <div class="text-gray-400 text-xs">Moves</div>
+      <div id="moves-display" class="text-xl font-bold text-white">0</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg px-4 py-2 text-center">
+      <div class="text-gray-400 text-xs">Optimal</div>
+      <div id="optimal-display" class="text-xl font-bold text-green-400">7</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg px-4 py-2 text-center">
+      <div class="text-gray-400 text-xs">Best</div>
+      <div id="best-display" class="text-xl font-bold text-yellow-400">—</div>
+    </div>
+  </div>
+
+  <div id="status-msg" class="text-center text-sm text-gray-400 mb-3 h-5" aria-live="polite"></div>
+
+  <div class="flex gap-2 justify-center mb-4" id="pegs-container" role="group" aria-label="Tower pegs">
+  </div>
+
+  <div id="win-banner" class="hidden bg-green-900 border border-green-500 rounded-2xl p-4 text-center mb-4">
+    <div class="text-3xl mb-1">🎉</div>
+    <div class="text-green-300 font-bold text-lg" id="win-msg"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#06b6d4','#8b5cf6','#ec4899'];
+
+let pegs, numDiscs, moveCount, selectedPeg, history, solving;
+
+function hsKey(n) { return `hanoi_best_${n}`; }
+function getBest(n) { const v = localStorage.getItem(hsKey(n)); return v ? parseInt(v) : null; }
+function setBest(n, v) { const b = getBest(n); if (b === null || v < b) localStorage.setItem(hsKey(n), v); }
+
+function optimal(n) { return Math.pow(2, n) - 1; }
+
+function initGame() {
+  numDiscs = parseInt($('disc-select').value);
+  pegs = [[], [], []];
+  for (let i = numDiscs; i >= 1; i--) pegs[0].push(i);
+  moveCount = 0; selectedPeg = -1; history = []; solving = false;
+  $('moves-display').textContent = '0';
+  $('optimal-display').textContent = optimal(numDiscs);
+  const b = getBest(numDiscs);
+  $('best-display').textContent = b !== null ? b : '—';
+  $('win-banner').classList.add('hidden');
+  $('status-msg').textContent = 'Click a peg to pick up its top disc';
+  render();
+}
+
+function discWidth(size) {
+  const min = 30, max = 90;
+  return min + (max - min) * ((size - 1) / (numDiscs - 1 || 1));
+}
+
+function render() {
+  const container = $('pegs-container');
+  container.innerHTML = '';
+  const labels = ['A', 'B', 'C'];
+  pegs.forEach((peg, i) => {
+    const wrapper = document.createElement('button');
+    wrapper.className = `peg-btn flex-1 flex flex-col items-center cursor-pointer bg-transparent border-0 p-0 focus:outline-none focus:ring-2 focus:ring-purple-500 rounded-xl relative${selectedPeg === i ? ' selected' : ''}`;
+    wrapper.setAttribute('aria-label', `Peg ${labels[i]}, ${peg.length} disc${peg.length !== 1 ? 's' : ''}`);
+    wrapper.setAttribute('aria-pressed', selectedPeg === i ? 'true' : 'false');
+    wrapper.addEventListener('click', () => pegClick(i));
+
+    const pegLabel = document.createElement('div');
+    pegLabel.className = `text-xs font-bold mb-1 ${selectedPeg === i ? 'text-indigo-300' : 'text-gray-500'}`;
+    pegLabel.textContent = labels[i];
+    wrapper.appendChild(pegLabel);
+
+    const area = document.createElement('div');
+    area.className = 'relative flex flex-col items-center justify-end';
+    area.style.width = '100%';
+    area.style.height = `${numDiscs * 28 + 20}px`;
+
+    const post = document.createElement('div');
+    post.className = `peg-post absolute left-1/2 -translate-x-1/2 rounded-t-full ${selectedPeg === i ? 'bg-indigo-400' : 'bg-gray-500'}`;
+    post.style.width = '10px';
+    post.style.height = `${numDiscs * 28 + 10}px`;
+    post.style.bottom = '16px';
+    area.appendChild(post);
+
+    for (let d = 0; d < peg.length; d++) {
+      const size = peg[d];
+      const discEl = document.createElement('div');
+      discEl.className = 'disc absolute rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg';
+      const w = discWidth(size);
+      const h = 22;
+      const bottom = 16 + d * 26;
+      discEl.style.width = `${w}%`;
+      discEl.style.height = `${h}px`;
+      discEl.style.bottom = `${bottom}px`;
+      discEl.style.left = `${(100 - w) / 2}%`;
+      discEl.style.backgroundColor = COLORS[(size - 1) % COLORS.length];
+      discEl.style.boxShadow = `0 2px 8px rgba(0,0,0,0.4)`;
+      if (d === peg.length - 1) {
+        discEl.style.filter = selectedPeg === i ? 'brightness(1.5) drop-shadow(0 0 8px rgba(165,180,252,0.8))' : 'none';
+      }
+      area.appendChild(discEl);
+    }
+
+    const base = document.createElement('div');
+    base.className = `peg-base rounded-lg ${selectedPeg === i ? 'bg-indigo-600' : 'bg-gray-600'}`;
+    base.style.width = '90%';
+    base.style.height = '16px';
+    area.appendChild(base);
+
+    wrapper.appendChild(area);
+    container.appendChild(wrapper);
+  });
+}
+
+function pegClick(i) {
+  if (solving) return;
+  if (selectedPeg === -1) {
+    if (pegs[i].length === 0) { $('status-msg').textContent = 'That peg is empty!'; return; }
+    selectedPeg = i;
+    $('status-msg').textContent = `Picked up disc from peg ${'ABC'[i]} — click destination peg`;
+    render();
+  } else if (selectedPeg === i) {
+    selectedPeg = -1;
+    $('status-msg').textContent = 'Cancelled. Click a peg to pick up a disc.';
+    render();
+  } else {
+    const from = selectedPeg;
+    const topFrom = pegs[from][pegs[from].length - 1];
+    const topTo = pegs[i].length > 0 ? pegs[i][pegs[i].length - 1] : Infinity;
+    if (topFrom > topTo) {
+      $('status-msg').textContent = 'Invalid! Can\'t place larger disc on smaller.';
+      selectedPeg = -1;
+      render();
+      return;
+    }
+    history.push(pegs.map(p => [...p]));
+    pegs[i].push(pegs[from].pop());
+    selectedPeg = -1;
+    moveCount++;
+    $('moves-display').textContent = moveCount;
+    checkWin();
+    render();
+  }
+}
+
+function checkWin() {
+  if (pegs[2].length === numDiscs) {
+    $('win-banner').classList.remove('hidden');
+    setBest(numDiscs, moveCount);
+    const b = getBest(numDiscs);
+    $('best-display').textContent = b;
+    const opt = optimal(numDiscs);
+    let msg = `Solved in ${moveCount} moves! `;
+    if (moveCount === opt) msg += '⭐ Perfect — optimal solution!';
+    else msg += `Optimal is ${opt} moves.`;
+    $('win-msg').textContent = msg;
+    $('status-msg').textContent = '';
+  } else {
+    $('status-msg').textContent = 'Click a peg to pick up its top disc';
+  }
+}
+
+function undo() {
+  if (solving || history.length === 0) return;
+  pegs = history.pop().map(p => [...p]);
+  moveCount--;
+  $('moves-display').textContent = moveCount;
+  $('win-banner').classList.add('hidden');
+  selectedPeg = -1;
+  render();
+}
+
+function generateSolution(n, from, to, via, moves) {
+  if (n === 0) return;
+  generateSolution(n - 1, from, via, to, moves);
+  moves.push([from, to]);
+  generateSolution(n - 1, via, to, from, moves);
+}
+
+async function autoSolve() {
+  if (solving) return;
+  initGame();
+  solving = true;
+  $('solve-btn').disabled = true;
+  $('solve-btn').textContent = 'Solving…';
+  const moves = [];
+  generateSolution(numDiscs, 0, 2, 1, moves);
+  const delay = Math.max(150, 600 - numDiscs * 50);
+  for (const [from, to] of moves) {
+    if (!solving) break;
+    pegs[to].push(pegs[from].pop());
+    moveCount++;
+    $('moves-display').textContent = moveCount;
+    render();
+    await new Promise(r => setTimeout(r, delay));
+  }
+  solving = false;
+  $('solve-btn').disabled = false;
+  $('solve-btn').textContent = 'Auto-Solve';
+  checkWin();
+}
+
+$('disc-select').addEventListener('change', initGame);
+$('reset-btn').addEventListener('click', () => { solving = false; initGame(); });
+$('undo-btn').addEventListener('click', undo);
+$('solve-btn').addEventListener('click', autoSolve);
+
+initGame();
+</script>
+</body>
+</html>
